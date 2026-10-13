@@ -1,0 +1,4 @@
+interface:
+  display_name: "文献 PDF 中译（agent 自译）"
+  short_description: "用 agent 自身模型逐段翻译论文 PDF，保留原版式"
+  default_prompt: "把这个论文 PDF 翻译成中文，保留原版式"

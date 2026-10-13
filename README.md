@@ -1,5 +1,7 @@
 # translate-paper
 
+[中文说明](README.zh-CN.md)
+
 Translate an academic paper PDF into Chinese in place. The two-column text, the table rules, the figure captions, the fonts and the colours all stay where the typesetter put them. The agent's own model does the translating, so there is no API key, no translation service, and no per-page bill.
 
 ```

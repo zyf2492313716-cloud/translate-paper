@@ -138,10 +138,22 @@ def main():
             body = tidy(" ".join(c for c in chunks if c))
             if not body:
                 continue
+            # colour per role: a run-in label is often a different ink than the body it leads
+            body_spans = [sp for l in lines for sp in l["spans"]
+                          if sp["text"].strip() and not is_bold(sp)]
+            label_spans = [sp for l in lines for sp in l["spans"]
+                           if sp["text"].strip() and is_bold(sp)]
+            def dominant(spans, fallback):
+                if not spans:
+                    return fallback
+                cs = [(sp["color"], max(len(sp["text"].strip()), 1)) for sp in spans]
+                return max({c for c, _ in cs}, key=lambda c: sum(w for x, w in cs if x == c))
+            first = lines[0]["spans"][0]["color"]
             units.append({"id": len(units), "page": pno, "role": "prose",
                           "rect": [round(v, 2) for v in block["bbox"]],
                           "redact": [[round(v, 2) for v in l["bbox"]] for l in lines],
-                          "size": size, "color": lines[0]["spans"][0]["color"],
+                          "size": size, "color": dominant(body_spans, first),
+                          "label_color": dominant(label_spans, first),
                           "text": body})
 
     json.dump({"units": units, "skipped": skipped}, open(args.output, "w", encoding="utf-8"),

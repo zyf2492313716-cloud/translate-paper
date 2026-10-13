@@ -87,6 +87,10 @@ FONTS = {False: F["regular"], True: F["bold"]}
 MARK = re.compile(r"\{\{/?b\}\}")
 
 
+def _cjk(ch):
+    return bool(ch) and ord(ch) >= 0x2E80
+
+
 def to_rgb(c):
     return ((c >> 16 & 255) / 255, (c >> 8 & 255) / 255, (c & 255) / 255)
 
@@ -154,22 +158,29 @@ def runs(line):
 
 def place(page, unit, text, size, leading):
     """Draw one unit; return metrics when it fits, None when it does not."""
+    body_col = to_rgb(unit["color"])
+    label_col = to_rgb(unit.get("label_color", unit["color"]))
     rect = pymupdf.Rect(unit["rect"])
     pad = 0.6
     if unit["role"] == "cell":
         rect.x1 += 4  # narrow columns: borrow a little of the inter-column gap
-    stream = [(tok, bold) for seg, bold in segments(text) for tok in tokenize(seg)]
+    stream = []
+    for seg, bold in segments(text):
+        if bold and stream and not stream[-1][0].endswith(" ") and _cjk(stream[-1][0][-1:]):
+            seg = " " + seg          # keep a run-in label from gluing onto its body
+        stream += [(tok, bold) for tok in tokenize(seg)]
     lines = flow(stream, size, rect.width - 2 * pad)
     if (len(lines) - 1) * leading + size * 1.05 > rect.height + 1.5:
         return None
-    color = to_rgb(unit["color"])
+    forced = bool(unit.get("bold"))  # a bold table cell: the whole cell is bold
     y = rect.y0 + size * 0.88
     widest = 0.0
     for line in lines:
         x = rect.x0 + pad
         for txt, bold in runs(line):
+            bold = bold or forced
             page.insert_text((x, y), txt, fontname=F["names"][1] if bold else F["names"][0],
-                             fontsize=size, color=color)
+                             fontsize=size, color=label_col if bold else body_col)
             x += FONTS[bold].text_length(txt, size)
         widest = max(widest, x)
         y += leading

@@ -47,6 +47,24 @@ gate that cannot fail is not a gate.
 | cost | API key + tokens | none |
 | wall time | ~14 min | ~10 min with 6 parallel lanes |
 
+## The review loop earns its keep
+
+A vision-review subagent (protocol in `references/review-checklist.md`) reviewing the first
+build of a real Lancet paper caught four defects the mechanical gates could not see:
+
+- **a meaning-level escalation**: "shows no evidence that consumption ... has an adverse effect"
+  (absence of evidence) had been translated as "显示…并无不良影响" (proof of no harm). Fixed in the
+  lane file, and the checklist now names this failure mode explicitly.
+- **wrong ink for whole paragraphs**: the extractor took a block's colour from its first span,
+  which is the red run-in label, so black body text was reprinted in journal red. Fixed by
+  storing body colour and label colour separately.
+- **table headers silently losing their weight**, because bold cells were rendered from
+  translation text that carries no bold markers. Fixed by honouring the cell's own bold flag.
+- **a Chinese word cut in half across a column break**, which English tolerates but Chinese does
+  not. Fixed by rewording the sentence boundary.
+
+All four became code or checklist entries, not one-off edits — the next paper inherits them.
+
 ## Bilingual form
 
 `--mode column` crops each column and pairs it with its own translation, which keeps text at

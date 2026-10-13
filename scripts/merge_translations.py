@@ -14,7 +14,7 @@ import os
 import re
 import sys
 
-MARK = re.compile(r"\{\{/?b\}\}")
+MARK = re.compile(r"\{\{/?b(?:r)?\}\}")
 LATIN = re.compile(r"[A-Za-z]{2,}")
 
 # short in-table forms; extend as needed for the target language

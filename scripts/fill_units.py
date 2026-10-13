@@ -112,6 +112,11 @@ def tokenize(s):
                 toks.append(cur)
                 cur = ""
             toks.append(" ")
+        elif ch == "\x01":
+            if cur:
+                toks.append(cur)
+                cur = ""
+            toks.append("{{br}}")
         elif ord(ch) < 0x2E80:
             cur += ch
         else:
@@ -133,6 +138,11 @@ def tokenize(s):
 def flow(stream, size, width):
     lines, cur, w = [], [], 0.0
     for tok, bold in stream:
+        if tok == "{{br}}":
+            if cur:
+                lines.append(cur)
+            cur, w = [], 0.0
+            continue
         tw = FONTS[bold].text_length(tok, size)
         if cur and w + tw > width:
             hang = len(tok) == 1 and tok in NO_START and w <= width + 0.6
@@ -164,24 +174,31 @@ def place(page, unit, text, size, leading):
     pad = 0.6
     if unit["role"] == "cell":
         rect.x1 += 4  # narrow columns: borrow a little of the inter-column gap
-    stream = []
+    stream, broke = [], False
     for seg, bold in segments(text):
-        if bold and stream and not stream[-1][0].endswith(" ") and _cjk(stream[-1][0][-1:]):
-            seg = " " + seg          # keep a run-in label from gluing onto its body
+        if stream and seg and not stream[-1][0].endswith(" "):
+            prev_bold, prev_char = stream[-1][1], stream[-1][0][-1]
+            if (bold and _cjk(prev_char)) or (prev_bold and _cjk(prev_char) and _cjk(seg[0])):
+                seg = " " + seg      # keep a run-in label from gluing onto its body
         stream += [(tok, bold) for tok in tokenize(seg)]
+        if bold and unit.get("br_after_label") and not broke:
+            stream.append(("{{br}}", False))
+            broke = True
     lines = flow(stream, size, rect.width - 2 * pad)
     if (len(lines) - 1) * leading + size * 1.05 > rect.height + 1.5:
         return None
-    forced = bool(unit.get("bold"))  # a bold table cell: the whole cell is bold
+    forced = bool(unit.get("bold"))  # whole block set in a bold face (summary box, bold cells)
     y = rect.y0 + size * 0.88
     widest = 0.0
     for line in lines:
         x = rect.x0 + pad
-        for txt, bold in runs(line):
-            bold = bold or forced
-            page.insert_text((x, y), txt, fontname=F["names"][1] if bold else F["names"][0],
-                             fontsize=size, color=label_col if bold else body_col)
-            x += FONTS[bold].text_length(txt, size)
+        for txt, seg_bold in runs(line):
+            # the FACE follows weight (marker or whole-block), the INK follows the
+            # label marker alone: a forced-bold body must not turn into label red
+            use_bold = seg_bold or forced
+            page.insert_text((x, y), txt, fontname=F["names"][1] if use_bold else F["names"][0],
+                             fontsize=size, color=label_col if seg_bold else body_col)
+            x += FONTS[use_bold].text_length(txt, size)
         widest = max(widest, x)
         y += leading
     return {"size": round(size, 2), "lines": len(lines),

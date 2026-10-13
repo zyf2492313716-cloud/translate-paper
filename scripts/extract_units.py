@@ -42,13 +42,22 @@ def sup(line, modal):
     return line["spans"][0]["size"] < 0.78 * modal
 
 
-def marked_line(line):
+def marked_line(line, mixed, body_color):
+    """Wrap a leading bold span as a run-in label.
+
+    Only when it really is one: either the block mixes bold with regular text, or
+    the span carries different ink than the body.  Weight alone is not enough -
+    the Lancet summary box sets its whole BODY in a bold face too, so a bold-only
+    test marks a random body word ("week.") as a label.
+    """
     spans = [s for s in line["spans"] if s["text"].strip()]
     if not spans:
         return ""
     out = ""
-    if is_bold(spans[0]) and len(spans[0]["text"].strip()) <= 26:
-        out += "{{b}}" + spans[0]["text"].strip() + "{{/b}} "
+    head = spans[0]
+    if is_bold(head) and len(head["text"].strip()) <= 26 \
+            and (mixed or head["color"] != body_color):
+        out += "{{b}}" + head["text"].strip() + "{{/b}} "
         spans = spans[1:]
     return out + "".join(s["text"] for s in spans)
 
@@ -124,7 +133,24 @@ def main():
 
             mains = sorted([l for l in lines if not sup(l, size)],
                            key=lambda l: (round(l["bbox"][1], 1), l["bbox"][0]))
-            chunks = [marked_line(l) for l in mains]
+            # ink per role: a run-in label is often a different colour than the body it leads.
+            # Classify by colour, never by weight - the Lancet summary box sets its BODY in a
+            # bold-ish face too, so "is this span bold" would mislabel 700 chars as a label.
+            all_spans = [sp for l in lines for sp in l["spans"] if sp["text"].strip()]
+
+            def dominant(spans, fallback):
+                if not spans:
+                    return fallback
+                cs = [(sp["color"], max(len(sp["text"].strip()), 1)) for sp in spans]
+                return max({c for c, _ in cs}, key=lambda c: sum(w for x, w in cs if x == c))
+
+            body_color = dominant(all_spans, all_spans[0]["color"])
+            label_color = dominant([sp for sp in all_spans if sp["color"] != body_color],
+                                   body_color)
+            weights = [is_bold(sp) for sp in all_spans]
+            mixed = any(weights) and not all(weights)
+            solid_bold = all(weights)  # whole block set in a bold face (summary box, affiliations)
+            chunks = [marked_line(l, mixed, body_color) for l in mains]
             for ln in lines:  # superscript citation markers glue onto their line
                 if not sup(ln, size):
                     continue
@@ -134,26 +160,21 @@ def main():
                     if ov > best_ov:
                         best, best_ov = i, ov
                 if best is not None:
-                    chunks[best] += marked_line(ln).replace(" ", "")
+                    chunks[best] += marked_line(ln, mixed, body_color).replace(" ", "")
+            # a line that is entirely a short bold label stands alone in the original;
+            # that is a layout fact, so it is recorded as a flag, never carried in the text
+            chunks = [c.strip() for c in chunks if c.strip()]
+            br_after_label = bool(chunks) and chunks[0].startswith("{{b}}") \
+                and chunks[0].endswith("{{/b}}") and len(chunks[0]) <= 34
             body = tidy(" ".join(c for c in chunks if c))
             if not body:
                 continue
-            # colour per role: a run-in label is often a different ink than the body it leads
-            body_spans = [sp for l in lines for sp in l["spans"]
-                          if sp["text"].strip() and not is_bold(sp)]
-            label_spans = [sp for l in lines for sp in l["spans"]
-                           if sp["text"].strip() and is_bold(sp)]
-            def dominant(spans, fallback):
-                if not spans:
-                    return fallback
-                cs = [(sp["color"], max(len(sp["text"].strip()), 1)) for sp in spans]
-                return max({c for c, _ in cs}, key=lambda c: sum(w for x, w in cs if x == c))
-            first = lines[0]["spans"][0]["color"]
             units.append({"id": len(units), "page": pno, "role": "prose",
                           "rect": [round(v, 2) for v in block["bbox"]],
                           "redact": [[round(v, 2) for v in l["bbox"]] for l in lines],
-                          "size": size, "color": dominant(body_spans, first),
-                          "label_color": dominant(label_spans, first),
+                          "size": size, "br_after_label": br_after_label,
+                          "bold": solid_bold,
+                          "color": body_color, "label_color": label_color,
                           "text": body})
 
     json.dump({"units": units, "skipped": skipped}, open(args.output, "w", encoding="utf-8"),

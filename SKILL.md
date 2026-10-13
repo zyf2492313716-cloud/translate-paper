@@ -25,6 +25,20 @@ Produces `work/units.json` (with `rect`, `redact`, `size`, `color`, `role`) and 
 and everything rotated / running head-footer / reference-list is dropped into `skipped`.
 Pass `--keep-refs` only if the user really wants the bibliography translated.
 
+What the extractor records about ink, and why it is not just "the colour of the block":
+
+- `color` / `label_color` — body ink and run-in-label ink, each the **dominant** colour of
+  the spans that carry it. Never the first span's colour (that is usually the label), and
+  never decided by weight: the Lancet summary box sets its whole *body* in a bold face,
+  so "is this span bold" mislabels 700 characters as a heading.
+- `bold` — the whole block is set in a bold face (summary box, affiliations). The
+  translation then renders in the bold face without needing markers in the text.
+- `br_after_label` — the label stands alone on its own line in the original, so the
+  typesetter breaks after it. Layout facts travel as flags, never as text markers.
+
+A `{{b}}...{{/b}}` marker in a unit's text therefore means exactly one thing: this span
+is a run-in label, and it is rendered in `label_color`.
+
 ### 2. Glossary, lanes, subagents
 
 Do **not** translate inside the main thread — a 30 000-character paper is 25 000 tokens of

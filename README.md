@@ -57,7 +57,14 @@ build of a real Lancet paper caught four defects the mechanical gates could not 
   lane file, and the checklist now names this failure mode explicitly.
 - **wrong ink for whole paragraphs**: the extractor took a block's colour from its first span,
   which is the red run-in label, so black body text was reprinted in journal red. Fixed by
-  storing body colour and label colour separately.
+  storing body colour and label colour separately, each the dominant colour of the spans that
+  carry it — classified by **ink, never by weight**, because the Lancet summary box sets its
+  whole body in a bold face.
+- **a bold body misread as a heading**: that same bold-only summary box made the extractor mark
+  a random body word ("week.") as a run-in label, which the translator faithfully copied and
+  the typesetter printed in label red. A block whose every span is bold now carries a
+  block-level `bold` flag instead of per-span markers, and the typesetter keeps the face
+  (bold) separate from the ink (label colour), so a forced-bold body cannot turn red.
 - **table headers silently losing their weight**, because bold cells were rendered from
   translation text that carries no bold markers. Fixed by honouring the cell's own bold flag.
 - **a Chinese word cut in half across a column break**, which English tolerates but Chinese does

@@ -1,9 +1,6 @@
 # translate-paper
 
-An agent skill that translates an academic paper PDF into Chinese **in place** — the two-column
-text, the tables with their rules, the figure captions, the fonts and the colours all stay where
-they were. The agent's own model is the translation engine: no API key, no translation service,
-no paid backend.
+Translate an academic paper PDF into Chinese in place. The two-column text, the table rules, the figure captions, the fonts and the colours all stay where the typesetter put them. The agent's own model does the translating, so there is no API key, no translation service, and no per-page bill.
 
 ```
 paper.pdf ─extract_units→ units.json ─split_lanes→ N lanes ─subagents→ trans_*.json
@@ -11,91 +8,86 @@ paper.pdf ─extract_units→ units.json ─split_lanes→ N lanes ─subagents�
         └─check_residual(gate) + audit_layout(gate) + make_dual(bilingual) + vision review
 ```
 
-## Why not just run pdf2zh over the spans
+![English source beside its translation](docs/bilingual-column.png)
 
-The obvious implementation — extract the PDF's text spans, translate each, write them back —
-produces fragments. In a real Lancet paper, 637 of 1365 spans are shorter than 15 characters and
-sentences are cut across spans by the typesetter. This skill works on **paragraph blocks**, and
-only drops to cell granularity where a block really is a table row.
+*Page 1 of a real 8-page Lancet paper (ALSPAC maternal seafood study, 2007), paired in `--mode column`.*
 
-## What it guarantees mechanically
+## Install
+
+```bash
+npx skills add zyf2492313716-cloud/translate-paper
+```
+
+Needs Python 3 with [PyMuPDF](https://pypi.org/project/PyMuPDF/) (`pip install pymupdf`). `fontTools` is optional; it only pulls a single face out of a macOS `.ttc`. The inserted text prefers a serif CJK face, in order: Source Han Serif or Noto Serif CJK on the system, a face extracted from `Songti.ttc`, a sans face, then PyMuPDF's built-in CJK.
+
+## Why paragraph blocks instead of spans
+
+Take the direct route of extracting every text span, translating it and writing it back, and you get fragments. On the Lancet paper used here, 637 of 1365 spans are shorter than 15 characters, and the typesetter has already cut sentences across them. This skill works on paragraph blocks, and only drops to cell granularity where a block really is a table row.
+
+![translated table](docs/table.png)
+
+## Gates
+
+Every stage ends in a mechanical check. These are the ones that can fail a build:
 
 | gate | catches |
 |---|---|
 | `MISS` | a unit nobody translated (a lane died) |
-| `LATIN` | English left in the translation that the source unit never contained |
-| `DRIFT` | one lane inventing its own synonym for a glossed term; the same source string getting two different renderings across lanes |
+| `LATIN` | English left in a translation that the source unit never contained |
+| `DRIFT` | a lane inventing its own synonym for a glossed term, or the same source string getting two different renderings across lanes |
 | `NUMBER` | a decimal or integer dropped while translating |
 | `LEFTOVER` | source letters surviving inside a replaced rectangle |
 | `OVERFLOW` | replacement running past its rectangle |
 | `CLIPPED` | a deliberately-kept cell eaten by a neighbour's redaction |
-| `BIoU` / `ANCHOR` / `SMALL` / `RULES` / `COLLIDE` | block structure drifting, mis-anchored text, sub-readable font size, lost table rules, text overlapping kept text |
+| `BIoU` / `ANCHOR` | block structure drifting page by page, replacement no longer starting where its block started |
+| `SMALL` / `RULES` / `COLLIDE` | text below the readable floor, table rules lost to redaction, replacement overlapping kept text |
 
-Every gate has been run against a deliberately broken input to confirm it can go red — a green
-gate that cannot fail is not a gate.
+Each gate was run against a deliberately broken input to confirm it can go red. A green gate that cannot fail is not a gate.
 
-## Measured against zotero-pdf2zh (pdf2zh_next 2.8.2 + DeepSeek) on the same 8-page paper
+## Measured against zotero-pdf2zh
+
+Same 8-page paper, pdf2zh_next 2.8.2 with DeepSeek on one side, this skill on the other:
 
 | | zotero-pdf2zh | this skill |
 |---|---|---|
 | numeric tokens preserved | 539/551 (12 had `·` normalised to `.`; footnote `12.1%` typeset as `12 1%`) | 551/551 |
 | table unit language | mixed (`8 yr` kept, `18个月`/`30 月`/`42 月` coexisting) | uniform |
 | `yr=years. mo=months.` | rendered as "岁=年，月=月" | rendered correctly |
-| reference list | translated (citations become unsearchable) | kept in the source language |
+| reference list | translated, so citations stop being searchable | kept in the source language |
 | bilingual output | yes | yes (`--mode page` or `--mode column`) |
-| auto glossary | yes (651 terms) | you write `glossary.md` first; the gate enforces it |
+| auto glossary | yes, 651 terms | you write `glossary.md` first; the gate enforces it |
 | cost | API key + tokens | none |
 | wall time | ~14 min | ~10 min with 6 parallel lanes |
 
-## The review loop earns its keep
+## What the vision review caught
 
-A vision-review subagent (protocol in `references/review-checklist.md`) reviewing the first
-build of a real Lancet paper caught four defects the mechanical gates could not see:
+The first build passed every gate above. A vision-review subagent still found five defects on it, and each one is now fixed in code rather than patched in the PDF:
 
-- **a meaning-level escalation**: "shows no evidence that consumption ... has an adverse effect"
-  (absence of evidence) had been translated as "显示…并无不良影响" (proof of no harm). Fixed in the
-  lane file, and the checklist now names this failure mode explicitly.
-- **wrong ink for whole paragraphs**: the extractor took a block's colour from its first span,
-  which is the red run-in label, so black body text was reprinted in journal red. Fixed by
-  storing body colour and label colour separately, each the dominant colour of the spans that
-  carry it — classified by **ink, never by weight**, because the Lancet summary box sets its
-  whole body in a bold face.
-- **a bold body misread as a heading**: that same bold-only summary box made the extractor mark
-  a random body word ("week.") as a run-in label, which the translator faithfully copied and
-  the typesetter printed in label red. A block whose every span is bold now carries a
-  block-level `bold` flag instead of per-span markers, and the typesetter keeps the face
-  (bold) separate from the ink (label colour), so a forced-bold body cannot turn red.
-- **table headers silently losing their weight**, because bold cells were rendered from
-  translation text that carries no bold markers. Fixed by honouring the cell's own bold flag.
-- **a Chinese word cut in half across a column break**, which English tolerates but Chinese does
-  not. Fixed by rewording the sentence boundary.
+- A meaning-level escalation. "Shows no evidence that consumption ... has an adverse effect" (absence of evidence) had become "显示…并无不良影响" (proof of no harm). The checklist now names this failure mode.
+- Whole paragraphs printed in the wrong ink. The extractor took a block's colour from its first span, which is the red run-in label, so black body text was reprinted in journal red. Body colour and label colour are now stored separately, each the dominant colour of the spans carrying it, classified by ink and never by weight.
+- A bold body misread as a heading. The Lancet summary box sets its entire body in a bold face, so the extractor marked a random body word ("week.") as a run-in label and the translator copied it faithfully. A block whose every span is bold now carries a block-level `bold` flag instead of per-span markers, and the typesetter keeps face and ink separate, so a forced-bold body cannot turn red.
+- Table headers quietly losing their weight, because bold cells were rendered from translation text that carries no bold markers. Fixed by honouring the cell's own bold flag.
+- A Chinese word cut in half across a column break, which English tolerates and Chinese does not. Fixed by rewording the sentence boundary.
 
-All four became code or checklist entries, not one-off edits — the next paper inherits them.
+The next paper inherits all of these as code and checklist entries.
 
-## Bilingual form
-
-`--mode column` crops each column and pairs it with its own translation, which keeps text at
-100% size on two-column journals; `--mode page` puts whole pages side by side (the form
-zotero-pdf2zh emits). Pages whose title, summary box or a wide table straddles the gutter fall
-back to whole-page pairing instead of being cut mid-word.
-
-## Install
+## Bilingual output
 
 ```bash
-npx skills add <owner>/translate-paper
+python scripts/make_dual.py paper.pdf paper.zh.pdf paper.dual.pdf --mode column
 ```
 
-Requires Python with PyMuPDF (`pip install pymupdf`); `fontTools` is optional and only used to
-pull a single face out of a macOS `.ttc`. Output prefers a serif CJK face (Source Han Serif →
-Songti SC → Noto Serif CJK → sans → PyMuPDF's built-in CJK).
+`--mode column` crops each column and pairs it with its own translation, which keeps the text at 100% on two-column journals. `--mode page` puts whole pages side by side, the form zotero-pdf2zh emits. Pages whose title, summary box or a wide table straddles the gutter fall back to whole-page pairing instead of being cut mid-word.
 
 ## Limits
 
-- No text layer, no go: scanned PDFs need OCR first.
-- Rotated text inside figures is left in the source language.
-- Bilingual output composes two PDFs side by side; it is not one page carrying both languages.
-- Translation happens in parallel subagents, so `glossary.md` is the only thing keeping lanes
-  consistent — write it before splitting lanes.
+- Scanned PDFs have no text layer. OCR first.
+- Rotated axis labels inside figures stay in the source language.
+- The bilingual version composes two PDFs side by side. It is not one page carrying both languages.
+- Lanes run as parallel subagents, so `glossary.md` is the only thing keeping terminology consistent. Write it before splitting lanes.
 
-Not a substitute for a professional translation; it is built for reading a paper you have to
-understand, fast.
+This is built for reading a paper you have to understand, fast. It is not a substitute for a professional translation.
+
+## License
+
+MIT

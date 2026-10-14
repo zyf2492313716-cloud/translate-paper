@@ -22,8 +22,9 @@ python scripts/extract_units.py paper.pdf -o work/units.json
 
 Produces `work/units.json` (with `rect`, `redact`, `size`, `color`, `role`) and a flat
 `work/units.txt` for reading. Roles: `prose` = one paragraph, `cell` = one table cell,
-and everything rotated / running head-footer / reference-list is dropped into `skipped`.
-Pass `--keep-refs` only if the user really wants the bibliography translated.
+`axis` = one rotated run inside a figure (y-axis labels), which carries `rot` and is drawn
+back with the same rotation. Running head/footer and the reference list are dropped into
+`skipped`. Pass `--keep-refs` only if the user really wants the bibliography translated.
 
 What the extractor records about ink, and why it is not just "the colour of the block":
 
@@ -58,6 +59,12 @@ the rules below pasted in, telling it to read its source file plus the glossary 
 only `work/trans_N.json` (`{"id": "译文"}`, plain UTF-8 JSON), replying with one line
 `lane N: wrote M entries`. Keep short-cell lanes on a separate prompt that stresses column
 widths — give the agent the actual narrow-cell renderings you want (`18 mo`→`18月`).
+
+Rotated figure labels go in the **last** lane, and their prompt is different again: their
+budget is the vertical advance of the original run, which `split_lanes.py` prints next to each
+one (`可用竖直长度 62.8 pt / 字号 6.43 ≈ 9 个汉字`). Tell that lane a Chinese character counts
+as 1 glyph and a Latin letter, digit, space or bracket counts as about 0.5, and that going over
+budget shrinks the label into illegibility.
 
 If a lane returns nothing, times out, or the gate names it: re-dispatch **that lane only**.
 Lane files are independent, so nothing else is lost. Never edit a lane's output into the
@@ -110,6 +117,14 @@ sans → PyMuPDF's built-in CJK. Report which one was used if the user cares abo
 The run prints `N units below 0.8x: [(id, factor), ...]`. Each such id is a wording problem,
 not a font problem: shorten that cell (re-dispatch the lane or edit its file) and re-run.
 Chasing it with more shrinking produces text nobody can read.
+
+Rotated units are redrawn with `insert_text(..., rotate=...)`, centred on the original run.
+A y-axis label reads bottom-to-top and its column is only ~6 pt wide, so the anchor comes from
+the extents the chosen face actually produces (measured once per size), not from font metrics.
+
+When a unit fits at no size down to 0.5x, `fill_units.py` prints it as `DROPPED` and exits 1.
+Do not treat that as a warning: the redaction pass already erased the source text, so a dropped
+unit is a hole in the page that `LEFTOVER` physically cannot detect.
 
 ### 5. Verify before calling it done
 
@@ -175,8 +190,9 @@ re-dispatching, and re-dispatch the narrow remaining work rather than the whole 
 ## Known limits
 
 - Scanned / image-only PDFs have no text layer: run OCR first.
-- Rotated axis labels inside figures are left in the source language (drawing them rotated
-  needs a text matrix; the current typesetter does not do it).
+- Axis-aligned rotated runs (90°/270°, the usual y-axis labels) are translated and redrawn
+  rotated. Genuinely oblique text is left in the source language and reported as `oblique`
+  in `skipped` - drawing it needs a text matrix, which the typesetter does not do.
 - Very dense tables may need a shorter cell wording rather than more shrinking; the floor is
   0.5x and anything below that is reported as `below 0.8x`.
 - Bilingual output is a **side-by-side composition** of the two PDFs (`make_dual.py`), not a

@@ -30,6 +30,19 @@ def pack(items, lanes, key):
     return out
 
 
+def label(u):
+    """Source text, plus the vertical budget for a rotated run.
+
+    A rotated label must be redrawn inside the original advance, and that is the one
+    constraint the translator cannot see in the text alone.
+    """
+    if not u.get("rot"):
+        return u["text"]
+    h = u["rect"][3] - u["rect"][1]
+    return (f"{u['text']}   (可用竖直长度 {h:.1f} pt / 字号 {u['size']} "
+            f"≈ {int(h // u['size'])} 个汉字)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("units")
@@ -39,15 +52,21 @@ def main():
     args = ap.parse_args()
 
     units = json.load(open(args.units))["units"]
-    big = [u for u in units if len(u["text"]) > CELL_MAX]
-    small = [u for u in units if len(u["text"]) <= CELL_MAX]
+    # rotated figure labels get a lane of their own: their constraint is the vertical
+    # advance of the original run, not a column width, so they need their own prompt
+    axis = [u for u in units if u.get("rot")]
+    rest = [u for u in units if not u.get("rot")]
+    big = [u for u in rest if len(u["text"]) > CELL_MAX]
+    small = [u for u in rest if len(u["text"]) <= CELL_MAX]
     lanes = pack(big, max(1, min(args.lanes, math.ceil(len(big) / 3))), lambda u: len(u["text"]))
     lanes += pack(small, max(1, min(args.cell_lanes, math.ceil(len(small) / 40))),
                   lambda u: len(u["text"]))
+    if axis:
+        lanes.append(axis)
     os.makedirs(args.dir, exist_ok=True)
     for i, lane in enumerate(lanes, 1):
         with open(os.path.join(args.dir, f"src_{i}.txt"), "w", encoding="utf-8") as fh:
-            fh.write("\n".join(f"[{u['id']}] {u['text']}" for u in lane) + "\n")
+            fh.write("\n".join(f"[{u['id']}] {label(u)}" for u in lane) + "\n")
         with open(os.path.join(args.dir, f"ids_{i}.txt"), "w", encoding="utf-8") as fh:
             fh.write("\n".join(str(u["id"]) for u in lane) + "\n")
         print(f"lane {i}: {len(lane)} units, {sum(len(u['text']) for u in lane)} chars")

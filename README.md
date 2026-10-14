@@ -28,6 +28,11 @@ Take the direct route of extracting every text span, translating it and writing 
 
 ![translated table](docs/table.png)
 
+Rotated figure labels are redrawn with the rotation they arrived in, so a y-axis label stays a
+y-axis label:
+
+![rotated axis label](docs/rotated-label.png)
+
 ## Gates
 
 Every stage ends in a mechanical check. These are the ones that can fail a build:
@@ -43,6 +48,7 @@ Every stage ends in a mechanical check. These are the ones that can fail a build
 | `CLIPPED` | a deliberately-kept cell eaten by a neighbour's redaction |
 | `BIoU` / `ANCHOR` | block structure drifting page by page, replacement no longer starting where its block started |
 | `SMALL` / `RULES` / `COLLIDE` | text below the readable floor, table rules lost to redaction, replacement overlapping kept text |
+| `DROPPED` | a unit erased by redaction that no size down to 0.5x could redraw; the run exits 1 |
 
 Each gate was run against a deliberately broken input to confirm it can go red. A green gate that cannot fail is not a gate.
 
@@ -84,7 +90,9 @@ python scripts/make_dual.py paper.pdf paper.zh.pdf paper.dual.pdf --mode column
 ## Limits
 
 - Scanned PDFs have no text layer. OCR first.
-- Rotated axis labels inside figures stay in the source language.
+- Axis-aligned rotated runs (90°/270°, the usual figure axis labels) are translated and
+  redrawn rotated. Genuinely oblique text is left in the source language and reported as
+  `oblique`.
 - The bilingual version composes two PDFs side by side. It is not one page carrying both languages.
 - Lanes run as parallel subagents, so `glossary.md` is the only thing keeping terminology consistent. Write it before splitting lanes.
 

@@ -4,7 +4,8 @@
 Roles:
   prose   - a flowing paragraph (one block) -> translate as a whole, re-wrap into its rect
   cell    - one table cell -> translate in place so the grid survives
-  skipped - rotated text, running head/footer, reference list, number-only cells
+  axis    - one vertical run inside a figure (a y-axis label) -> redrawn rotated
+  skipped - oblique text, running head/footer, reference list, number-only cells
 
 Run-in bold labels inside a paragraph are wrapped in {{b}}...{{/b}} markers; the
 fill step renders them with the bold face.
@@ -40,6 +41,32 @@ def line_text(line):
 
 def sup(line, modal):
     return line["spans"][0]["size"] < 0.78 * modal
+
+
+def rot_deg(dirv):
+    """insert_text rotation matching a text run's direction vector."""
+    dx, dy = dirv
+    if abs(dx) < 0.2:
+        return 90 if dy < 0 else 270
+    return 180 if dx < 0 else 0
+
+
+def rotated_unit(line, page):
+    """One vertical text run (a figure axis label) as its own unit.
+
+    These used to be dropped, which left axis labels in the source language while
+    everything around them was translated.
+    """
+    spans = [s for s in line["spans"] if s["text"].strip()]
+    txt = tidy("".join(s["text"] for s in spans))
+    if not spans or not HAS_LETTER.search(txt):
+        return None
+    cs = [(s["color"], max(len(s["text"].strip()), 1)) for s in spans]
+    color = max({c for c, _ in cs}, key=lambda c: sum(w for x, w in cs if x == c))
+    bbox = [round(v, 2) for v in line["bbox"]]
+    return {"page": page, "role": "axis", "rot": rot_deg(line["dir"]), "rect": bbox,
+            "redact": [bbox], "size": round(max(s["size"] for s in spans), 2),
+            "color": color, "text": txt}
 
 
 def marked_line(line, mixed, body_color):
@@ -95,6 +122,18 @@ def main():
         for block in page.get_text("dict")["blocks"]:
             if block.get("type") != 0:
                 continue
+            for l in block["lines"]:  # vertical runs are units of their own
+                if not l["spans"] or not line_text(l).strip():
+                    continue
+                dx = l["dir"][0]
+                if abs(dx) > 0.9:
+                    continue
+                u = rotated_unit(l, pno) if abs(dx) < 0.2 else None
+                if u:
+                    u["id"] = len(units)
+                    units.append(u)
+                else:  # oblique text needs a real text matrix; leave it in the source
+                    skipped.append({"page": pno, "why": "oblique", "text": line_text(l)[:70]})
             lines = [l for l in block["lines"]
                      if l["spans"] and line_text(l).strip()
                      and tuple(round(v, 1) for v in l["dir"]) == (1.0, 0.0)]
@@ -183,7 +222,8 @@ def main():
         for u in units:
             fh.write(f"[{u['id']}] {u['text']}\n")
     pr = sum(1 for u in units if u["role"] == "prose")
-    print(f"{len(units)} units ({pr} prose, {len(units) - pr} cells), "
+    ax = sum(1 for u in units if u["role"] == "axis")
+    print(f"{len(units)} units ({pr} prose, {len(units) - pr - ax} cells, {ax} rotated), "
           f"{sum(len(u['text']) for u in units)} chars, {len(skipped)} blocks skipped -> {args.output}")
     print(f"translate in batches, then merge with merge_translations.py")
 

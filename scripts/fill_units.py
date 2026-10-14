@@ -13,6 +13,7 @@ import glob
 import json
 import os
 import re
+import sys
 
 import pymupdf
 
@@ -166,11 +167,55 @@ def runs(line):
     return out
 
 
+_EXT = {}
+
+
+def _extents(name, fontfile, size, rot):
+    """How far insert_text(rotate=rot) grows either side of its anchor, measured
+    with the real face rather than guessed from font metrics."""
+    key = (name, fontfile, round(size, 2), rot)
+    if key not in _EXT:
+        d = pymupdf.open()
+        pg = d.new_page(width=200, height=200)
+        kw = {"fontsize": size, "rotate": rot}
+        if fontfile:
+            kw["fontfile"] = fontfile
+        pg.insert_text((100, 100), "中H", fontname=name, **kw)
+        b = pg.get_text("dict")["blocks"][0]["lines"][0]["bbox"]
+        _EXT[key] = (100 - b[0], b[2] - 100)
+        d.close()
+    return _EXT[key]
+
+
+def place_rot(page, unit, text, size, rect):
+    """A vertical figure label: one run along the original advance, centred on it."""
+    text = MARK.sub("", text).strip()
+    if not text:
+        return None
+    bold = bool(unit.get("bold"))
+    name, file = F["names"][1 if bold else 0], F["files"][1 if bold else 0]
+    adv = FONTS[bold].text_length(text, size)
+    if adv > rect.height + 1.5:  # the original column is the only room there is
+        return None
+    rot = unit["rot"]
+    dl, dr = _extents(name, file, size, rot)
+    cx, cy = (rect.x0 + rect.x1) / 2, (rect.y0 + rect.y1) / 2
+    ax = cx + (dl - dr) / 2
+    ay = cy + adv / 2 if rot == 90 else cy - adv / 2
+    page.insert_text((ax, ay), text, fontname=name, fontfile=file, fontsize=size,
+                     color=to_rgb(unit["color"]), rotate=rot)
+    near, far = (ay - adv, ay) if rot == 90 else (ay, ay + adv)
+    return {"size": round(size, 2), "lines": 1,
+            "drawn": [round(ax - dl, 1), round(near, 1), round(ax + dr, 1), round(far, 1)]}
+
+
 def place(page, unit, text, size, leading):
     """Draw one unit; return metrics when it fits, None when it does not."""
     body_col = to_rgb(unit["color"])
     label_col = to_rgb(unit.get("label_color", unit["color"]))
     rect = pymupdf.Rect(unit["rect"])
+    if unit.get("rot"):
+        return place_rot(page, unit, text, size, rect)
     pad = 0.6
     if unit["role"] == "cell":
         rect.x1 += 4  # narrow columns: borrow a little of the inter-column gap
@@ -241,7 +286,8 @@ def main():
                 got = place(page, unit, text, size, size * 1.2)
                 if got:
                     got.update(page=pno, role=unit["role"], factor=s, base=unit["size"],
-                               rect=unit["rect"], chars=len(MARK.sub("", text)))
+                               rect=unit["rect"], rot=unit.get("rot", 0),
+                               chars=len(MARK.sub("", text)))
                     placed[uid] = got
                     if s < 0.8:
                         tight.append((uid, s))
@@ -250,9 +296,13 @@ def main():
                 got = place(page, unit, text, round(unit["size"] * 0.5, 2), unit["size"] * 0.6)
                 if got:
                     got.update(page=pno, role=unit["role"], factor=0.0, base=unit["size"],
-                               rect=unit["rect"], chars=len(MARK.sub("", text)))
+                               rect=unit["rect"], rot=unit.get("rot", 0),
+                               chars=len(MARK.sub("", text)))
                     placed[uid] = got
                 tight.append((uid, "forced"))
+    # a unit that was erased and then not redrawn is a hole in the page, and no
+    # downstream gate can see it: the source letters are gone, so LEFTOVER stays quiet
+    dropped = sorted(uid for uid in trans if uid not in placed)
     doc.subset_fonts(fallback=True)  # CFF faces need fontTools as backup
     doc.save(args.out, garbage=4, deflate=True)
     placed["_fonts"] = {"names": list(F["names"]),
@@ -260,6 +310,14 @@ def main():
     json.dump(placed, open(args.manifest, "w"), ensure_ascii=False)
     print(f"wrote {args.out} ({os.path.getsize(args.out)/1e6:.2f} MB); "
           f"{len(tight)} units below 0.8x: {tight[:10]}")
+    if dropped:
+        for uid in dropped:
+            u = units[uid]
+            print(f"  DROPPED [{uid}] p{u['page'] + 1} {u['role']}: nothing from "
+                  f"{u['size']}pt down to 0.5x fits {trans[uid][:26]!r} into "
+                  f"{round(u['rect'][2] - u['rect'][0])}x{round(u['rect'][3] - u['rect'][1])}pt")
+        print("GATE: FAIL (redacted but never redrawn)")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

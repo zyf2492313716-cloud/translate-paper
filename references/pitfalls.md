@@ -46,3 +46,32 @@ quietly shrank it to 4·5 pt. Read the fill output and shorten the cell.
 failed or drifting lane is re-run alone. Editing its JSON by hand pulls thousands of characters
 of translation into the main context and makes the fix unattributable.
 
+## Rotated figure labels
+
+**Only axis-aligned runs can be redrawn.** A rotated label is extracted by its direction vector,
+but 90°/270° is the only family `insert_text(rotate=...)` can produce. A genuinely oblique run
+must be left in the source language and recorded in `skipped` as `oblique`, or it comes back
+horizontal and lies across the figure.
+
+**Do not derive the rotated anchor from font metrics.** Ascender ratios differ per face, and the
+probe string itself changes the box. Insert a probe into a scratch page at the size you are about
+to use, measure how far the produced bbox grows either side of the anchor, and solve for the
+anchor from the measured extents. Centre the run on the original one: the two-line y-axis label
+(`Social development` over `children suboptimum (%)`) is a construct centred on the axis, so
+bottom-aligning it reads as a different label.
+
+**A column window alone will not isolate a rotated run.** A y-axis label sits in a ~6 pt x strip
+that the page's horizontal body text crosses at other heights, so "all chars whose x-centre is
+inside the rect" returns the whole page's strip. Filter by line direction first, then by box.
+
+**`ANCHOR` means something else for rotated units.** Prose hangs from the block's start; a rotated
+label is centred on its original run. Comparing the drawn corner to the rect corner reports six
+false MEDIUMs on one Lancet figure page. Compare centres for rotated units.
+
+**A dropped unit is invisible to `LEFTOVER`.** When nothing fits down to 0.5x the unit is not
+redrawn, but the redaction pass already erased the source text, so there are no source letters
+left to find and the gate stays green on a page with a hole in it. `fill_units.py` therefore
+prints `DROPPED` and exits 1: the stage that erases has to be the one that refuses to claim
+success. Verified both ways on the Lancet build, and by injecting an over-long label
+(`GATE: FAIL`, exit 1) against the clean build (exit 0).
+

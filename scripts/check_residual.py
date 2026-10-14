@@ -17,9 +17,41 @@ def runs(text):
     return sorted(re.findall(r"[A-Za-z]+", MARK.sub("", text)))
 
 
-def chars_in(page, rect):
-    """Letters whose horizontal centre falls inside rect (avoids neighbour cells)."""
+def vertical_lines(page, rect, tol):
+    """Vertical text runs overlapping one rotated unit's box.
+
+    A y-axis label sits in a narrow x strip that the page's horizontal body text
+    crosses too, so a column window alone grabs unrelated lines.  Direction is what
+    separates them.
+    """
+    band = pymupdf.Rect(rect) + (-2, -tol, 2, tol)
+    out = []
+    for blk in page.get_text("rawdict")["blocks"]:
+        if blk.get("type") != 0:
+            continue
+        for ln in blk["lines"]:
+            if abs(ln["dir"][0]) > 0.2:
+                continue
+            b = pymupdf.Rect(ln["bbox"])
+            if band.intersects(b) and rect.x0 - 2 <= (b.x0 + b.x1) / 2 <= rect.x1 + 2:
+                out.append((b, ln))
+    return out
+
+
+def chars_in(page, rect, rot=0):
+    """Letters belonging to one unit.
+
+    Horizontal text is selected by its left edge inside the column and a shared
+    baseline.  A rotated run advances along y instead, so its characters come from the
+    vertical lines overlapping the box: the column is only ~6 pt wide and the inserted
+    text a little wider, so an edge test would also catch the neighbouring label.
+    """
     out = ""
+    if rot:
+        for _, ln in vertical_lines(page, rect, 2.5):
+            for sp in ln["spans"]:
+                out += "".join(ch["c"] for ch in sp["chars"])
+        return out
     for blk in page.get_text("rawdict")["blocks"]:
         if blk.get("type") != 0:
             continue
@@ -41,17 +73,28 @@ def main(pdf, units_file, trans_file):
     for uid in sorted(trans):
         u = units[uid]
         rect = pymupdf.Rect(u["rect"])
-        got = chars_in(doc[u["page"]], rect)
+        rot = u.get("rot", 0)
+        got = chars_in(doc[u["page"]], rect, rot)
         extra = sorted(set(runs(got)) - set(runs(trans[uid])))
         if extra:
             fails += 1
             print(f"  LEFTOVER [{uid}] p{u['page']+1} {extra} src={u['text'][:26]!r} zh={trans[uid][:26]!r}")
-        over = max((pymupdf.Rect(ch["bbox"]).x1 for blk in doc[u["page"]].get_text("rawdict")["blocks"]
-                    if blk.get("type") == 0 for ln in blk["lines"] for sp in ln["spans"]
-                    for ch in sp["chars"]
-                    if abs(pymupdf.Rect(ch["bbox"]).y1 - rect.y1) < 3.5
-                    and rect.x0 - 1 <= pymupdf.Rect(ch["bbox"]).x0 <= rect.x1 + 0.2), default=0)
-        if over > rect.x1 + (5 if u['role'] == 'cell' else 2.5):
+        tol = 5 if u["role"] == "cell" else 2.5
+        if rot:  # advance is vertical here: check both ends of the run
+            got = [b for b, _ in vertical_lines(doc[u["page"]], rect, tol)]
+            if got:
+                low, high = max(b.y1 for b in got), min(b.y0 for b in got)
+                if low > rect.y1 + tol or high < rect.y0 - tol:
+                    fails += 1
+                    print(f"  OVERFLOW [{uid}] p{u['page']+1} runs {high:.1f}..{low:.1f} "
+                          f"past rect {rect.y0:.1f}..{rect.y1:.1f}")
+            continue
+        chars = [pymupdf.Rect(ch["bbox"]) for blk in doc[u["page"]].get_text("rawdict")["blocks"]
+                 if blk.get("type") == 0 for ln in blk["lines"] for sp in ln["spans"]
+                 for ch in sp["chars"]]
+        over = max((b.x1 for b in chars
+                    if abs(b.y1 - rect.y1) < 3.5 and rect.x0 - 1 <= b.x0 <= rect.x1 + 0.2), default=0)
+        if over > rect.x1 + tol:
             fails += 1
             print(f"  OVERFLOW [{uid}] p{u['page']+1} text ends {over:.1f} > rect {rect.x1:.1f}")
 
@@ -59,7 +102,7 @@ def main(pdf, units_file, trans_file):
         if uid in trans or not re.search(r"[A-Za-z]", u["text"]):
             continue
         rect = pymupdf.Rect(u["rect"])
-        got = "".join(ch for ch in chars_in(doc[u["page"]], rect + (-1.5, 0, 1.5, 0)))
+        got = "".join(ch for ch in chars_in(doc[u["page"]], rect + (-1.5, 0, 1.5, 0), u.get("rot", 0)))
         if runs(got) != runs(u["text"]):
             fails += 1
             print(f"  CLIPPED [{uid}] p{u['page']+1} kept={u['text'][:20]!r} found={runs(u['text'])} vs {runs(got)}")

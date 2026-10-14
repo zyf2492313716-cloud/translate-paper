@@ -26,6 +26,10 @@ npx skills add zyf2492313716-cloud/translate-paper
 
 ![翻译后的表格](docs/table.png)
 
+图内竖排的坐标轴标签按原来的旋转方向重画，竖排仍然是竖排：
+
+![竖排坐标轴标签](docs/rotated-label.png)
+
 ## 门禁
 
 每个阶段结尾都有机械检查，下列任何一项不过都会让构建失败：
@@ -41,6 +45,7 @@ npx skills add zyf2492313716-cloud/translate-paper
 | `CLIPPED` | 刻意保留的单元格被相邻区域的擦除吃掉 |
 | `BIoU` / `ANCHOR` | 逐页块结构漂移，替换文本不再落在原块起点 |
 | `SMALL` / `RULES` / `COLLIDE` | 字号低于可读下限，表格线被擦除丢失，译文与保留文字重叠 |
+| `DROPPED` | 被擦除后缩到 0.5x 也画不回去的单元；此时整个流程以退出码 1 收场 |
 
 每个门禁都对着一个故意破坏的输入跑过，确认它能判红。不会变红的绿灯不算门禁。
 
@@ -82,7 +87,7 @@ python scripts/make_dual.py paper.pdf paper.zh.pdf paper.dual.pdf --mode column
 ## 边界
 
 - 扫描件没有文字层，先过 OCR。
-- 图内旋转的坐标轴标签保持原文。
+- 轴对齐的旋转文字（90°/270°，也就是常见的坐标轴标签）照原方向翻译并重画；真正斜排的文字保持原文，并在 `skipped` 里记为 `oblique`。
 - 中英对照版是两个 PDF 并排合成，不是一页同时承载两种语言。
 - 各车道是并行子代理，`glossary.md` 是保持术语一致的唯一手段。分车道之前先写好它。
 

@@ -87,9 +87,15 @@ def main():
 
     for uid, m in sorted(man.items()):
         drawn, base = pymupdf.Rect(m["drawn"]), pymupdf.Rect(m["rect"])
-        if abs(drawn.x0 - base.x0) > 2 or abs(drawn.y0 - base.y0) > 2:
+        if m.get("rot"):
+            # a rotated axis label is centred on its original run, not hung from its start
+            off = [abs((drawn.x0 + drawn.x1) / 2 - (base.x0 + base.x1) / 2),
+                   abs((drawn.y0 + drawn.y1) / 2 - (base.y0 + base.y1) / 2)]
+        else:
+            off = [drawn.x0 - base.x0, drawn.y0 - base.y0]
+        if abs(off[0]) > 2 or abs(off[1]) > 2:
             findings.append({"unit": uid, "page": m["page"] + 1, "kind": "ANCHOR", "severity": "medium",
-                             "value": [round(drawn.x0 - base.x0, 1), round(drawn.y0 - base.y0, 1)],
+                             "value": [round(v, 1) for v in off],
                              "detail": "replacement does not start where the source block started"})
         if m["size"] < args.min_size:
             findings.append({"unit": uid, "page": m["page"] + 1, "kind": "SMALL",

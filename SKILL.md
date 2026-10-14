@@ -1,6 +1,6 @@
 ---
 name: translate-paper
-description: Translate an academic paper / journal PDF into Chinese (or another language) while keeping the original layout - two-column text blocks, tables with their grid and rules, figure captions, fonts and colours. The agent's own model is the translation engine, so no API key, no external translation service and no paid backend is needed. Use when the user asks to 翻译论文/文献翻译/把这篇 PDF 翻译成中文/translate this paper, or wants a readable Chinese copy of a paper PDF that still looks like the paper. Not for scanned/image-only PDFs (OCR first), not for editable Word rebuilds, not for single-paragraph glosses.
+description: Translate an academic paper / journal PDF into Chinese (or another language) while keeping the original layout - two-column text blocks, tables with their grid and rules, figure captions, rotated axis labels, fonts and colours. The agent's own model is the translation engine, so no API key, no external translation service and no paid backend is needed. Use when the user asks to 翻译论文/文献翻译/把这篇 PDF 翻译成中文/translate this paper, or wants a readable Chinese copy of a paper PDF that still looks like the paper. Not for scanned/image-only PDFs (OCR first), not for editable Word rebuilds, not for single-paragraph glosses.
 ---
 
 # Translate a paper PDF in place

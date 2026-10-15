@@ -111,13 +111,35 @@ def script_chunks(txt):
     return [(c, lat) for c, lat in out]
 
 
+def sup_parts(txt):
+    """Split a string into (text, raised) pieces at the {{s}} reference markers."""
+    out, up = [], False
+    for piece in re.split(r"(\{\{s\}\}|\{\{/s\}\})", txt):
+        if piece == "{{s}}":
+            up = True
+        elif piece == "{{/s}}":
+            up = False
+        elif piece:
+            out.append((piece, up))
+    return out
+
+
 def wlen(txt, bold, size):
-    """Width of a string when each script is drawn with its own face."""
+    """Width of a string when each script is drawn with its own face and references are lifted."""
     tot = 0.0
-    for chunk, lat in script_chunks(txt):
-        tot += (LAT[bold] if lat else FONTS[bold]).text_length(chunk, size)
+    for part, up in sup_parts(txt):
+        sz = size * (SUP_SCAL if up else 1.0)
+        for chunk, lat in script_chunks(part):
+            tot += (LAT[bold] if lat else FONTS[bold]).text_length(chunk, sz)
     return tot
-MARK = re.compile(r"\{\{/?b\}\}")
+MARK = re.compile(r"\{\{/?[bs](?:r)?\}\}")
+SUP_SCAL, SUP_RAISE = 0.62, 0.32
+
+
+def flat(s):
+    """A string reduced to what a reader compares: no markup, no whitespace."""
+    return re.sub(r"\s+", "", MARK.sub("", s))
+
 
 
 def _cjk(ch):
@@ -385,17 +407,20 @@ def place(page, unit, text, size, leading, rect=None, align="left", draw=True):
             # label marker alone: a forced-bold body must not turn into label red
             use_bold = seg_bold or forced
             col = label_col if seg_bold else body_col
-            for chunk, lat in script_chunks(txt):
-                if draw:
-                    if lat:
-                        page.insert_text((x, y), chunk,
-                                         fontname="hebo" if use_bold else "helv",
-                                         fontsize=size, color=col)
-                    else:
-                        page.insert_text((x, y), chunk,
-                                         fontname=F["names"][1] if use_bold else F["names"][0],
-                                         fontsize=size, color=col)
-                x += wlen(chunk, use_bold, size)
+            for part, up in sup_parts(txt):
+                sz = size * (SUP_SCAL if up else 1.0)
+                yy = y - size * (SUP_RAISE if up else 0.0)
+                for chunk, lat in script_chunks(part):
+                    if draw:
+                        if lat:
+                            page.insert_text((x, yy), chunk,
+                                             fontname="hebo" if use_bold else "helv",
+                                             fontsize=sz, color=col)
+                        else:
+                            page.insert_text((x, yy), chunk,
+                                             fontname=F["names"][1] if use_bold else F["names"][0],
+                                             fontsize=sz, color=col)
+                    x += wlen(chunk, use_bold, sz)
         widest = max(widest, x)
         y += leading
     return {"size": round(size, 2), "lines": len(lines),
@@ -422,7 +447,19 @@ def main():
     tight, placed = [], {}
     for pno, items in sorted(by_page.items()):
         page = doc[pno]
+        # a unit whose translation is the source word for word (an author byline, a bare URL) is
+        # left exactly as found: redrawing it throws away the journal's own face and italic and
+        # forces a shrink to fit ours, which is how a byline ended up at 0.75x for no benefit
+        keep = {uid for uid, t in items if flat(t) == flat(units[uid]["text"])}
+        for uid in sorted(keep):
+            u = units[uid]
+            placed[uid] = {"page": pno, "role": u["role"], "size": u["size"], "factor": 1.0,
+                           "base": u["size"], "rect": u["rect"], "drawn": u["rect"],
+                           "rot": u.get("rot", 0), "kept": True,
+                           "chars": len(MARK.sub("", u["text"]))}
         for uid, _ in items:
+            if uid in keep:
+                continue
             for r in units[uid]["redact"]:
                 page.add_redact_annot(pymupdf.Rect(r) + (0, -0.45, 0, 0.45))
         page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,
@@ -432,6 +469,8 @@ def main():
             page.insert_font(fontname="ZhR", fontfile=F["files"][0])
             page.insert_font(fontname="ZhB", fontfile=F["files"][1])
         for uid, text in items:
+            if uid in keep:
+                continue
             unit = units[uid]
             if unit.get("rot"):
                 rect, align = pymupdf.Rect(unit["rect"]), "left"

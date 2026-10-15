@@ -14,7 +14,7 @@ import os
 import re
 import sys
 
-MARK = re.compile(r"\{\{/?b(?:r)?\}\}")
+MARK = re.compile(r"\{\{/?[bs](?:r)?\}\}")
 LATIN = re.compile(r"[A-Za-z]{2,}")
 
 # short in-table forms; extend as needed for the target language
@@ -137,6 +137,56 @@ def main():
                    ((run[:i], run[i:]) for i in range(1, len(run)))):
                 glue.append((uid, run))
 
+    # a {{s}} marker the translation dropped is a citation that no longer exists; one it invented
+    # points at a source nobody cited. The count has to survive, and the pairs have to close.
+    supbad = []
+    for uid, text in trans.items():
+        n, m = by_id[uid]["text"].count("{{s}}"), text.count("{{s}}")
+        if n != m or m != text.count("{{/s}}"):
+            supbad.append((uid, n, m))
+
+    # per unit, not per lane: a lane that swaps one term for a synonym still uses the mandated
+    # string inside longer compounds, so a lane-level "is it present at all" check cannot see it.
+    # Both sides must be counted the same way, or 晚期孕产妇死亡 is subtracted from the output
+    # while "late maternal deaths" still counts toward the source - which accused a clean lane.
+    unitchk = []
+    for uid, text in trans.items():
+        if by_id[uid]["role"] != "prose":
+            continue
+        src = MARK.sub("", by_id[uid]["text"])
+        out = MARK.sub("", text)
+        for en, zh in gloss:
+            stem = lambda w: w[:-1] if w.endswith("s") and len(w) > 3 else w
+            words = [stem(x) for x in en.split("(")[0].strip().lower().split()]
+            if len(en.split("(")[0].strip()) < 5 or len(words) < 2:
+                continue
+            rx_of = lambda ws: r"[\s,.]+".join(re.escape(w) + "s?" for w in ws)
+            phrase = rx_of(words)
+            longer = [z2 for _, z2 in gloss if z2 != zh and zh in z2]
+            # subtract on the ENGLISH side: "causes of maternal deaths" is one term the glossary
+            # renders as 孕产妇死因, and leaving it inside this count blamed a correct figure caption
+            sub = 0
+            for e2, _ in gloss:
+                w2 = [stem(x) for x in e2.split("(")[0].strip().lower().split()]
+                if len(w2) <= len(words) or not any(
+                        w2[i:i + len(words)] == words for i in range(len(w2) - len(words) + 1)):
+                    continue
+                sub += len(re.findall(rx_of(w2), src, re.I))
+            hits = len(re.findall(phrase, src, re.I)) - sub
+            if hits < 2:
+                continue
+            if zh in out or any(z2 in out for z2 in longer):
+                continue
+            # a shorter term matched inside a longer one ("maternal death" inside "late maternal
+            # deaths", rendered 晚期孕产妇死亡): only an expansion of THIS term excuses its absence,
+            # and only when the unit's own source really uses that longer English term. Any longer
+            # glossed word would excuse everything - "麻醉并发症" once did.
+            if any(z2 in out and zh in z2 and len(re.findall(
+                    r"[\s,.]+".join(re.escape(w) for w in e2.split("(")[0].strip().lower().split()),
+                    src, re.I)) for e2, z2 in gloss if z2 != zh and len(z2) > len(zh)):
+                continue
+            unitchk.append((uid, en, zh))
+
     print(f"units={len(units)} translated={len(trans)} missing={len(missing)} "
           f"allowlist={len(allow)} glossary={len(gloss)}")
     for u in missing:
@@ -149,7 +199,13 @@ def main():
         print(f"  NUMBER [{uid}] lost {tok!r} :: {by_id[uid]['text'][:32]!r} -> {trans[uid][:32]!r}")
     for uid, tok in sorted(glue)[:30]:
         print(f"  GLUE [{uid}] {tok!r} :: {by_id[uid]['text'][:32]!r} -> {trans[uid][:32]!r}")
-    if missing or bad or drift or numloss or glue:
+    for uid, en, zh in sorted(unitchk)[:30]:
+        print(f"  TERM [{uid}] p{by_id[uid]['page']+1} source says {en!r} twice or more but this "
+              f"unit never writes {zh!r} :: {trans[uid][:40]!r}")
+    for uid, n, m in sorted(supbad)[:30]:
+        print(f"  SUP [{uid}] source carries {n} reference marker(s), translation has {m} "
+              f":: {by_id[uid]['text'][:30]!r} -> {trans[uid][:30]!r}")
+    if missing or bad or drift or numloss or glue or supbad or unitchk:
         print("GATE: FAIL  (keep abbreviations in", args.allow,
               "; re-dispatch drifting lanes, restore lost numbers - never edit the gate)")
         sys.exit(1)

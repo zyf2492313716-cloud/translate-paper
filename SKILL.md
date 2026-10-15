@@ -26,9 +26,11 @@ Produces `work/units.json` (with `rect`, `redact`, `size`, `color`, `role`) and 
 back with the same rotation. Running head/footer and the reference list are dropped into
 `skipped`. Pass `--keep-refs` only if the user really wants the bibliography translated.
 
-A superscript reference is separated from the number it follows (`one in 116.2` is 116 plus
-reference 2), using the span's size and raised baseline rather than a wording pattern: left glued,
-a translator copies `116.2` as if it were a statistic.
+A raised reference is wrapped in `{{s}}...{{/s}}` and kept off the number before it: `one in 116.{{s}}2{{/s}}`
+is 116 plus reference 2. Left glued, a translator copies `116.2` as if it were a statistic and the
+number gate then demands the literal `20064` survive a faithful translation. The marker is detected
+from the span's size and raised baseline, never from a wording pattern: this journal writes real
+decimals with `·` and its `SDG target 3.1` is genuine.
 
 What the extractor records about ink, and why it is not just "the colour of the block":
 
@@ -103,7 +105,10 @@ Fails (exit 1) on:
 never contained (a leftover); `DRIFT` a lane whose sources use a glossed term ≥2 times while
 its output never uses the mandated Chinese — that is how parallel lanes silently diverge;
 `NUMBER` a figure that did not survive; `GLUE` a digit run the source never wrote that splits into
-two runs it did — a reference marker glued onto the number beside it (`ICD-11` + ref 20 → `ICD-1120`).
+two runs it did — a reference marker glued onto the number beside it (`ICD-11` + ref 20 → `ICD-1120`);
+`SUP` a `{{s}}` marker the lane dropped (a citation that no longer exists) or invented; `TERM` a unit
+whose own source uses a glossed term twice while its translation never writes the mandated Chinese —
+per unit, because a lane-level presence test cannot see a synonym swap hidden inside a longer compound.
 
 Cross-column abbreviations (`WISC`, `SDQ`, `MeHg`) legitimately survive into a later
 paragraph's translation: list those in `work/allow.txt` (one per line) so the gate separates
@@ -119,6 +124,12 @@ Redacts text only (`graphics=LINE_ART_NONE`, `images=NONE`), then fits each bloc
 the font down to 0.5x and never letting closing punctuation lead a line. Font resolution order:
 Source Han Serif / Noto Serif CJK on the system → a serif face pulled out of `Songti.ttc` →
 sans → PyMuPDF's built-in CJK. Report which one was used if the user cares about type.
+
+A unit whose translation is the source word for word (an author byline, a bare URL) is left alone:
+not redacted, not redrawn. Redrawing it throws away the journal's own italic and forces a shrink to
+fit our wider face.
+
+`{{s}}...{{/s}}` renders as a real superscript (0.62x, raised 0.32em).
 
 Each line is set in two faces: Chinese and Chinese punctuation on the CJK face, Latin and the marks
 inside Latin words on a Latin one (`helv`/`hebo`). The serif that carries Chinese draws Latin about

@@ -10,7 +10,7 @@ import sys
 
 import pymupdf
 
-MARK = re.compile(r"\{\{/?b(?:r)?\}\}")
+MARK = re.compile(r"\{\{/?[bs](?:r)?\}\}")
 
 
 def runs(text):

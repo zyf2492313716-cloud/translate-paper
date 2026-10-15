@@ -118,3 +118,25 @@ source never wrote that *splits* into two runs it did: that is `ICD-11` + ref `2
 your vertical span.** The original check looked at the block's bottom line, so a multi-line block
 whose first line crossed the column was invisible; the naive fix (any line overlapping the band)
 blamed a table row's long first line on the unit that held its last word.
+
+**Leave a verbatim unit alone.** Once a translation equals its source, redrawing it buys nothing and
+costs the source's own face: a 17-name byline came out at 0.75x because our serif Latin is wider than
+the journal's condensed italic. Skip it before the redaction pass, and record it in the manifest as
+kept so the dropped-unit gate does not call it a hole.
+
+**A reference marker has to survive as a marker, not as a digit.** `SUP` compares the count of
+`{{s}}` per unit: a lane that folds the citation into the sentence text has silently deleted a
+citation. Recovering markers into translations written before the marker existed needs a position
+rule, and the safe one is greedy in source order plus a citation context (the character before it is
+sentence punctuation or a space); anything ambiguous stays inline, because a missed lift is cosmetic
+and a wrong lift moves a number.
+
+**A term gate must count both sides the same way.** Checking "did this lane ever use the mandated
+Chinese" cannot see a wholesale synonym swap: the string survives inside longer compounds
+(`孕产妇死亡率` hides `孕产妇死亡`). Going per unit fixes that, but then two new false reds appeared:
+`晚期孕产妇死亡` was subtracted from the output count while `late maternal deaths` still counted toward
+the source, and `causes of maternal deaths` (rendered 孕产妇死因) matched the shorter term
+`maternal death`. The fix is to subtract on the *English* side — drop the occurrences of any longer
+glossed term that contains this one, with plurals normalised on both the comparison and the match.
+Proved both ways: the clean build passes, and replacing 孕产妇死亡 with 母亲死亡 in one unit names that
+unit.

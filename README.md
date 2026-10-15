@@ -43,6 +43,8 @@ Every stage ends in a mechanical check. These are the ones that can fail a build
 | `LATIN` | English left in a translation that the source unit never contained |
 | `DRIFT` | a lane inventing its own synonym for a glossed term, or the same source string getting two different renderings across lanes |
 | `GLUE` | a digit run the source never wrote that splits into two runs it did, ie a reference marker glued onto the number beside it (`ICD-11` + ref 20 → `ICD-1120`) |
+| `SUP` | a `{{s}}` reference marker the translation dropped (a citation that no longer exists) or invented |
+| `TERM` | a unit whose own source uses a glossed term twice while its translation never writes the mandated Chinese |
 | `NUMBER` | a decimal or integer dropped while translating |
 | `LEFTOVER` | source letters surviving inside a replaced rectangle |
 | `OVERFLOW` | replacement running past its rectangle |

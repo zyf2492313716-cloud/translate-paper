@@ -36,20 +36,22 @@ def is_bold(span):
 
 
 def join_spans(spans):
-    """Concatenate spans, never letting a superscript reference glue to the number it follows.
+    """Concatenate spans, marking every raised run as a reference the typesetter must lift.
 
-    'one in 116.2' is 116 plus reference 2; joined naively it reads as the decimal 116.2, and a
-    translator who copies that statistic has just invented a number. The number gate would also
-    demand the literal '116.2' survive, which no faithful translation can do.
+    'one in 116.2' is 116 plus reference 2: joined naively it reads as the decimal 116.2, so a
+    translator copies a statistic that was never written and the number gate demands the literal
+    '116.2' survive a faithful translation. The marker keeps them apart on both sides.
     """
     big = max((s["size"] for s in spans), default=0)
     base = max((s["origin"][1] for s in spans), default=0)
     out = ""
     for s in spans:
         t = s["text"]
-        if out and t.strip() and out[-1] not in " \u2009" \
-                and s["size"] < 0.8 * big and base - s["origin"][1] > 0.25 * big:
-            out += " "
+        if t.strip() and s["size"] < 0.8 * big and base - s["origin"][1] > 0.25 * big:
+            if out and not out.endswith(" "):
+                out += " "
+            out += "{{s}}" + t + "{{/s}}"
+            continue
         out += t
     return out
 

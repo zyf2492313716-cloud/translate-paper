@@ -85,6 +85,38 @@ def load_fonts():
 
 F = load_fonts()
 FONTS = {False: F["regular"], True: F["bold"]}
+
+# ASCII plus the few Latin-context marks the journals use inside numbers and acronym strings.
+# Chinese punctuation (—— … “”) deliberately stays on the CJK face: Helvetica draws them short
+# and low, which reads as a hole in the sentence.
+LATIN_OK = set(map(chr, range(0x20, 0x7F))) | set("–·°±×÷")
+LAT = {False: pymupdf.Font("helv"), True: pymupdf.Font("hebo")}
+
+
+def script_chunks(txt):
+    """Split into runs of one script: Chinese stays on the CJK face, Latin goes to a Latin one.
+
+    Journals set their Latin in a condensed sans; the serif that carries Chinese draws Latin
+    about a third wider, so an unbreakable acronym string or URL that measured to fit comes out
+    past the column it belongs to. Giving Latin its own face fixes the width and matches the
+    source's own type choice.
+    """
+    out = []
+    for ch in txt:
+        lat = ch in LATIN_OK
+        if out and out[-1][1] == lat:
+            out[-1][0] += ch
+        else:
+            out.append([ch, lat])
+    return [(c, lat) for c, lat in out]
+
+
+def wlen(txt, bold, size):
+    """Width of a string when each script is drawn with its own face."""
+    tot = 0.0
+    for chunk, lat in script_chunks(txt):
+        tot += (LAT[bold] if lat else FONTS[bold]).text_length(chunk, size)
+    return tot
 MARK = re.compile(r"\{\{/?b\}\}")
 
 
@@ -136,7 +168,27 @@ def tokenize(s):
     return merged
 
 
+def _split_long(stream, size, width):
+    """Cut tokens wider than the line itself.
+
+    A URL, a DOI or a dash-joined acronym string has no space to break at, so it overflows the
+    column at every font size; shrinking it to fit makes it unreadable instead. Breaking it where
+    the line ends is what browsers and the journals' own house style do for bare links.
+    """
+    out = []
+    for tok, bold in stream:
+        if len(tok) > 3 and " " not in tok and wlen(tok, bold, size) > width:
+            while tok:
+                i = max(j for j in range(1, len(tok) + 1) if wlen(tok[:j], bold, size) <= width)
+                out.append((tok[:i], bold))
+                tok = tok[i:]
+        else:
+            out.append((tok, bold))
+    return out
+
+
 def flow(stream, size, width):
+    stream = _split_long(stream, size, width)
     lines, cur, w = [], [], 0.0
     for tok, bold in stream:
         if tok == "{{br}}":
@@ -144,7 +196,7 @@ def flow(stream, size, width):
                 lines.append(cur)
             cur, w = [], 0.0
             continue
-        tw = FONTS[bold].text_length(tok, size)
+        tw = wlen(tok, bold, size)
         if cur and w + tw > width:
             hang = len(tok) == 1 and tok in NO_START and w <= width + 0.6
             if not hang:
@@ -194,7 +246,7 @@ def place_rot(page, unit, text, size, rect):
         return None
     bold = bool(unit.get("bold"))
     name, file = F["names"][1 if bold else 0], F["files"][1 if bold else 0]
-    adv = FONTS[bold].text_length(text, size)
+    adv = wlen(text, bold, size)
     if adv > rect.height + 1.5:  # the original column is the only room there is
         return None
     rot = unit["rot"]
@@ -209,15 +261,104 @@ def place_rot(page, unit, text, size, rect):
             "drawn": [round(ax - dl, 1), round(near, 1), round(ax + dr, 1), round(far, 1)]}
 
 
-def place(page, unit, text, size, leading):
+_INK = {}
+BORROW = 110.0
+
+
+def _ink(page):
+    """Text lines and vector paths of one page, cached; used to bound horizontal growth."""
+    if page.number not in _INK:
+        runs, paths = [], []
+        for b in page.get_text("dict")["blocks"]:
+            if b.get("type") != 0:
+                continue
+            for ln in b["lines"]:
+                if "".join(s["text"] for s in ln["spans"]).strip():
+                    runs.append(pymupdf.Rect(ln["bbox"]))
+        for d in page.get_drawings():
+            paths.append(d["rect"])
+        _INK[page.number] = (runs, paths)
+    return _INK[page.number]
+
+
+def slack(page, rect):
+    """Free room left and right of one text line before it meets another run of ink.
+
+    Only ink that sits wholly to one side counts: a frame or a column rule that spans
+    past the line in both directions is not a wall beside it.
+    """
+    runs, paths = _ink(page)
+    fl = fr = float("inf")
+    for r in runs + paths:
+        if r.y1 <= rect.y0 + 0.5 or r.y0 >= rect.y1 - 0.5:
+            continue                      # a different row
+        if r.x1 <= rect.x0 + 0.5:
+            fl = min(fl, rect.x0 - r.x1)
+        elif r.x0 >= rect.x1 - 0.5:
+            fr = min(fr, r.x0 - rect.x1)
+    # nothing on a side means the side is open, not that it has no room - but "open" stops
+    # at the page edge, and a borrow is capped anyway, or a caption line could run off-sheet
+    cap_l = min(BORROW, max(0.0, rect.x0 - page.rect.x0 - 8.0))
+    cap_r = min(BORROW, max(0.0, page.rect.x1 - rect.x1 - 8.0))
+    return (min(fl, cap_l) if fl != float("inf") else cap_l,
+            min(fr, cap_r) if fr != float("inf") else cap_r)
+
+
+def need_width(plain, unit):
+    """Width of the text as one unwrapped line at the unit's own size."""
+    return FONTS[bool(unit.get("bold"))].text_length(plain, unit["size"])
+
+
+def fit_rect(page, unit, text):
+    """Where to typeset one unit, borrowing whitespace beside it when its own box is too tight.
+
+    A unit's rect is its own ink box, but a table row header sits in a column far wider than
+    the word that labels it, and a legend key has the gap to its swatch on one side. Chinese
+    needs that room; shrinking to 0.5x to stay inside the ink box is not a fix, it is a label
+    nobody can read. Candidates are tried in the order that disturbs the page least: the box
+    itself, then growing right (keeps a cell's left edge on its column), then growing left.
+    """
+    own = pymupdf.Rect(unit["rect"])
+    plain = MARK.sub("", text).strip()
+    if not plain or own.height > 1.9 * unit["size"]:
+        return own, "left"
+    fl, fr = slack(page, own)
+    if fl <= 0 and fr <= 0:
+        return own, "left"
+    # borrow only what the line needs: a box grown to the cap would reach the next column
+    # and the residual checks would then read that column's ink as this unit's overflow
+    want = max(0.0, need_width(plain, unit) - own.width) + 1.5
+    if want <= 0:
+        return own, "left"
+    for rect, al in ((own, "left"),
+                     (pymupdf.Rect(own.x0, own.y0, own.x1 + min(fr, want, BORROW), own.y1), "left"),
+                     (pymupdf.Rect(own.x0 - min(fl, want, BORROW), own.y0, own.x1, own.y1), "right")):
+        if rect.width <= own.width + 0.5:
+            continue
+        if best_factor(page, unit, text, rect, al) >= 0.8:
+            return rect, al
+    return own, "left"
+
+
+def best_factor(page, unit, text, rect, align):
+    """Largest shrink that fits, without drawing anything."""
+    for s in SHRINKS:
+        size = round(unit["size"] * s, 2)
+        if place(page, unit, text, size, size * 1.2, rect, align, draw=False):
+            return s
+    return 0.0
+
+
+def place(page, unit, text, size, leading, rect=None, align="left", draw=True):
     """Draw one unit; return metrics when it fits, None when it does not."""
     body_col = to_rgb(unit["color"])
     label_col = to_rgb(unit.get("label_color", unit["color"]))
-    rect = pymupdf.Rect(unit["rect"])
+    rect = pymupdf.Rect(unit["rect"]) if rect is None else rect
     if unit.get("rot"):
         return place_rot(page, unit, text, size, rect)
     pad = 0.6
     if unit["role"] == "cell":
+        rect = pymupdf.Rect(rect)
         rect.x1 += 4  # narrow columns: borrow a little of the inter-column gap
     stream, broke = [], False
     for seg, bold in segments(text):
@@ -236,14 +377,25 @@ def place(page, unit, text, size, leading):
     y = rect.y0 + size * 0.88
     widest = 0.0
     for line in lines:
-        x = rect.x0 + pad
-        for txt, seg_bold in runs(line):
+        seg = list(runs(line))
+        w = sum(wlen(t, sb or forced, size) for t, sb in seg)
+        x = rect.x1 - pad - w if align == "right" else rect.x0 + pad
+        for txt, seg_bold in seg:
             # the FACE follows weight (marker or whole-block), the INK follows the
             # label marker alone: a forced-bold body must not turn into label red
             use_bold = seg_bold or forced
-            page.insert_text((x, y), txt, fontname=F["names"][1] if use_bold else F["names"][0],
-                             fontsize=size, color=label_col if seg_bold else body_col)
-            x += FONTS[use_bold].text_length(txt, size)
+            col = label_col if seg_bold else body_col
+            for chunk, lat in script_chunks(txt):
+                if draw:
+                    if lat:
+                        page.insert_text((x, y), chunk,
+                                         fontname="hebo" if use_bold else "helv",
+                                         fontsize=size, color=col)
+                    else:
+                        page.insert_text((x, y), chunk,
+                                         fontname=F["names"][1] if use_bold else F["names"][0],
+                                         fontsize=size, color=col)
+                x += wlen(chunk, use_bold, size)
         widest = max(widest, x)
         y += leading
     return {"size": round(size, 2), "lines": len(lines),
@@ -281,22 +433,29 @@ def main():
             page.insert_font(fontname="ZhB", fontfile=F["files"][1])
         for uid, text in items:
             unit = units[uid]
+            if unit.get("rot"):
+                rect, align = pymupdf.Rect(unit["rect"]), "left"
+            else:
+                rect, align = fit_rect(page, unit, text)
+            grown = None if [round(v, 1) for v in rect] == \
+                [round(v, 1) for v in pymupdf.Rect(unit["rect"])] else [round(v, 1) for v in rect]
             for s in SHRINKS:
                 size = round(unit["size"] * s, 2)
-                got = place(page, unit, text, size, size * 1.2)
+                got = place(page, unit, text, size, size * 1.2, rect, align)
                 if got:
                     got.update(page=pno, role=unit["role"], factor=s, base=unit["size"],
-                               rect=unit["rect"], rot=unit.get("rot", 0),
+                               rect=unit["rect"], rot=unit.get("rot", 0), grown=grown,
                                chars=len(MARK.sub("", text)))
                     placed[uid] = got
                     if s < 0.8:
                         tight.append((uid, s))
                     break
             else:
-                got = place(page, unit, text, round(unit["size"] * 0.5, 2), unit["size"] * 0.6)
+                got = place(page, unit, text, round(unit["size"] * 0.5, 2), unit["size"] * 0.6,
+                            rect, align)
                 if got:
                     got.update(page=pno, role=unit["role"], factor=0.0, base=unit["size"],
-                               rect=unit["rect"], rot=unit.get("rot", 0),
+                               rect=unit["rect"], rot=unit.get("rot", 0), grown=grown,
                                chars=len(MARK.sub("", text)))
                     placed[uid] = got
                 tight.append((uid, "forced"))
@@ -305,8 +464,8 @@ def main():
     dropped = sorted(uid for uid in trans if uid not in placed)
     doc.subset_fonts(fallback=True)  # CFF faces need fontTools as backup
     doc.save(args.out, garbage=4, deflate=True)
-    placed["_fonts"] = {"names": list(F["names"]),
-                        "faces": sorted({f.name for f in FONTS.values()})}
+    placed["_fonts"] = {"names": list(F["names"]) + ["helv", "hebo"],
+                        "faces": sorted({f.name for f in FONTS.values()} | {f.name for f in LAT.values()})}
     json.dump(placed, open(args.manifest, "w"), ensure_ascii=False)
     print(f"wrote {args.out} ({os.path.getsize(args.out)/1e6:.2f} MB); "
           f"{len(tight)} units below 0.8x: {tight[:10]}")

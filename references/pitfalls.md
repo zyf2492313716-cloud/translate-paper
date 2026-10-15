@@ -75,3 +75,46 @@ prints `DROPPED` and exits 1: the stage that erases has to be the one that refus
 success. Verified both ways on the Lancet build, and by injecting an over-long label
 (`GATE: FAIL`, exit 1) against the clean build (exit 0).
 
+
+## Mixed script, borrowed whitespace, and the number that was really a footnote
+
+**A serif that carries Chinese draws Latin about a third wider than the journal's condensed
+sans.** The sidebar string `UNDP–UNFPA–UNICEF–WHO–` measured 106 pt against an 83 pt column and
+overflowed at *every* size, because it has no space to break at. Route Latin (and the marks that
+live inside Latin words) to a real Latin face; keep `—— … “”` on the CJK face, because Helvetica
+draws them short and low and it reads as a hole in the sentence.
+
+**An unbreakable token needs a mid-token break, not a smaller font.** Bare URLs and DOIs are the
+common case; every browser breaks them too. Shrinking one to 0.5x to stay inside the box produces
+text nobody can read.
+
+**A unit's rect is its own ink box, not the column it sits in.** A table row header occupies 17 pt
+of a 116 pt column, and a figure legend key has the gap to its swatch on one side. Let a
+single-line unit borrow the whitespace beside it, bounded by the nearest *ink* (text line or vector
+path) that sits wholly to that side. Grow right first so a cell keeps its column's left edge; grow
+left, and right-align at the original edge, only when the right side cannot reach 0.8x.
+
+**"No obstacle on that side" is not "no room on that side".** Mapping an empty side to a zero
+budget silently disabled the whole feature; every label stayed at 0.7x and every gate stayed green.
+An open side means the cap, and the cap is still bounded by the page edge.
+
+**Borrow only what the line needs.** A box grown to the cap reaches the next column, and the
+residual checks then read that column's ink as this unit's overflow: three false reds, one of them
+207 pt wide, all traced to a 5 pt deficit.
+
+**Superscript references glue onto the number before them in the text layer.** `one in 116.2` is
+116 plus reference 2, and `20% in 20064` is 2006 plus reference 4. Split them at extraction, using
+the span's size and raised baseline, or a translator copies `116.2` as a statistic, and the number
+gate demands the literal `20064` survive a faithful translation. Detect the glue from geometry, not
+from a wording pattern: Lancet writes real decimals with `·` and its SDG target `3.1` is genuine.
+
+**The gate that follows a mid-token break must forgive its fragments.** After breaking a URL, the
+next line reads back as `e。`, so `LEFTOVER` has to exempt any run that is a strict prefix or
+suffix of a longer word the translation kept. Same reason the number gate now flags a digit run the
+source never wrote that *splits* into two runs it did: that is `ICD-11` + ref `20` becoming
+`ICD-1120`, which a reader takes for a code.
+
+**Overflow is per line, and a line is yours only if it starts on your left edge and sits inside
+your vertical span.** The original check looked at the block's bottom line, so a multi-line block
+whose first line crossed the column was invisible; the naive fix (any line overlapping the band)
+blamed a table row's long first line on the unit that held its last word.

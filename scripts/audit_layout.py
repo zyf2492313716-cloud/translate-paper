@@ -86,7 +86,7 @@ def main():
                              "detail": "block structure drifted from the source page"})
 
     for uid, m in sorted(man.items()):
-        drawn, base = pymupdf.Rect(m["drawn"]), pymupdf.Rect(m["rect"])
+        drawn, base = pymupdf.Rect(m["drawn"]), pymupdf.Rect(m.get("grown") or m["rect"])
         if m.get("rot"):
             # a rotated axis label is centred on its original run, not hung from its start
             off = [abs((drawn.x0 + drawn.x1) / 2 - (base.x0 + base.x1) / 2),

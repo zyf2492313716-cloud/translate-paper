@@ -42,6 +42,7 @@ Every stage ends in a mechanical check. These are the ones that can fail a build
 | `MISS` | a unit nobody translated (a lane died) |
 | `LATIN` | English left in a translation that the source unit never contained |
 | `DRIFT` | a lane inventing its own synonym for a glossed term, or the same source string getting two different renderings across lanes |
+| `GLUE` | a digit run the source never wrote that splits into two runs it did, ie a reference marker glued onto the number beside it (`ICD-11` + ref 20 → `ICD-1120`) |
 | `NUMBER` | a decimal or integer dropped while translating |
 | `LEFTOVER` | source letters surviving inside a replaced rectangle |
 | `OVERFLOW` | replacement running past its rectangle |

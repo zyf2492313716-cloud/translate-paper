@@ -35,8 +35,27 @@ def is_bold(span):
     return bool(span["flags"] & 2**4) or "Bold" in span["font"]
 
 
+def join_spans(spans):
+    """Concatenate spans, never letting a superscript reference glue to the number it follows.
+
+    'one in 116.2' is 116 plus reference 2; joined naively it reads as the decimal 116.2, and a
+    translator who copies that statistic has just invented a number. The number gate would also
+    demand the literal '116.2' survive, which no faithful translation can do.
+    """
+    big = max((s["size"] for s in spans), default=0)
+    base = max((s["origin"][1] for s in spans), default=0)
+    out = ""
+    for s in spans:
+        t = s["text"]
+        if out and t.strip() and out[-1] not in " \u2009" \
+                and s["size"] < 0.8 * big and base - s["origin"][1] > 0.25 * big:
+            out += " "
+        out += t
+    return out
+
+
 def line_text(line):
-    return "".join(s["text"] for s in line["spans"])
+    return join_spans(line["spans"])
 
 
 def sup(line, modal):
@@ -86,7 +105,7 @@ def marked_line(line, mixed, body_color):
             and (mixed or head["color"] != body_color):
         out += "{{b}}" + head["text"].strip() + "{{/b}} "
         spans = spans[1:]
-    return out + "".join(s["text"] for s in spans)
+    return out + join_spans(spans)
 
 
 def row_clusters(lines):

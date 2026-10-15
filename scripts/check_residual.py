@@ -64,18 +64,26 @@ def chars_in(page, rect, rot=0):
     return out
 
 
-def main(pdf, units_file, trans_file):
+def main(pdf, units_file, trans_file, manifest=None):
     doc = pymupdf.open(pdf)
     units = {u["id"]: u for u in json.load(open(units_file))["units"]}
     trans = {int(k): v for k, v in json.load(open(trans_file)).items()}
+    man = {int(k): v for k, v in json.load(open(manifest)).items() if k.isdigit()} if manifest else {}
     fails = 0
 
     for uid in sorted(trans):
         u = units[uid]
-        rect = pymupdf.Rect(u["rect"])
+        # the box actually typeset into: a label that borrowed whitespace is not overflowing,
+        # and reading its surviving chars from the narrower ink box would cut a word in half
+        rect = pymupdf.Rect(man.get(uid, {}).get("grown") or u["rect"])
         rot = u.get("rot", 0)
         got = chars_in(doc[u["page"]], rect, rot)
-        extra = sorted(set(runs(got)) - set(runs(trans[uid])))
+        kept = runs(trans[uid])
+        # a tight rect, or a URL the typesetter had to break mid-word, reads back as a fragment of
+        # a word the translation kept on purpose: "database" -> "too"/"e" is an edge artifact, not
+        # a leftover. A word that is not a piece of some longer kept word still fails.
+        extra = sorted(r for r in set(runs(got)) - set(kept)
+                       if not any(w != r and (w.startswith(r) or w.endswith(r)) for w in kept))
         if extra:
             fails += 1
             print(f"  LEFTOVER [{uid}] p{u['page']+1} {extra} src={u['text'][:26]!r} zh={trans[uid][:26]!r}")
@@ -92,11 +100,25 @@ def main(pdf, units_file, trans_file):
         chars = [pymupdf.Rect(ch["bbox"]) for blk in doc[u["page"]].get_text("rawdict")["blocks"]
                  if blk.get("type") == 0 for ln in blk["lines"] for sp in ln["spans"]
                  for ch in sp["chars"]]
-        over = max((b.x1 for b in chars
-                    if abs(b.y1 - rect.y1) < 3.5 and rect.x0 - 1 <= b.x0 <= rect.x1 + 0.2), default=0)
-        if over > rect.x1 + tol:
+        # every line of the block, not just the one at its bottom edge: a multi-line block whose
+        # FIRST line crosses the column is the commonest overflow. A line counts as ours only if it
+        # sits wholly inside this unit's vertical span and starts on its left edge, else a table
+        # row split across two units blames its neighbour's long line on the short one.
+        over, glyph = 0.0, max(2.5, float(man.get(uid, {}).get("size") or u["size"]))
+        for blk in doc[u["page"]].get_text("rawdict")["blocks"]:
+            if blk.get("type") != 0:
+                continue
+            for ln in blk["lines"]:
+                lb = pymupdf.Rect(ln["bbox"])
+                if abs(ln["dir"][0]) < 0.9 or abs(lb.x0 - rect.x0) > 1.5:
+                    continue
+                if lb.y0 < rect.y0 - 0.5 or lb.y1 > rect.y1 + 0.5:
+                    continue
+                over = max(over, lb.x1 - rect.x1)
+        if over > glyph:
             fails += 1
-            print(f"  OVERFLOW [{uid}] p{u['page']+1} text ends {over:.1f} > rect {rect.x1:.1f}")
+            print(f"  OVERFLOW [{uid}] p{u['page']+1} a line runs {over:.1f} past rect "
+                  f"{rect.x1:.1f} (one glyph is {glyph:.1f})")
 
     for uid, u in sorted(units.items()):
         if uid in trans or not re.search(r"[A-Za-z]", u["text"]):

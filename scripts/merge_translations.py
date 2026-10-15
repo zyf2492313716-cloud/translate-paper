@@ -86,7 +86,7 @@ def main():
         for tok in set(LATIN.findall(MARK.sub("", text))):
             if tok in allow:
                 continue
-            if not re.search(r"\b" + re.escape(tok) + r"\b", src, re.I):
+            if not re.search(r"(?<![A-Za-z])" + re.escape(tok) + r"(?![A-Za-z])", src, re.I):
                 bad.append((uid, tok))
 
     drift = []
@@ -121,6 +121,22 @@ def main():
             if tok not in keep:
                 numloss.append((uid, tok))
 
+    # a reference number glued onto the year that follows it reads as one six-digit statistic:
+    # 'deaths.24 In 2015' must not come out as '死亡。242015年'. The source never contains that
+    # concatenation, so its absence on both sides is what makes this check precise.
+    glue = []
+    for uid, text in trans.items():
+        src = MARK.sub("", by_id[uid]["text"])
+        src_runs = set(re.findall(r"\d+", src))
+        for run in sorted(set(re.findall(r"(?<!\d)\d{3,}(?!\d)", MARK.sub("", text)))):
+            if run in src_runs:
+                continue
+            # a number the source never wrote that splits into two numbers it did: that is a
+            # reference marker glued onto the figure beside it (ICD-11 + ref 20 -> ICD-1120)
+            if any(a in src_runs and b in src_runs for a, b in
+                   ((run[:i], run[i:]) for i in range(1, len(run)))):
+                glue.append((uid, run))
+
     print(f"units={len(units)} translated={len(trans)} missing={len(missing)} "
           f"allowlist={len(allow)} glossary={len(gloss)}")
     for u in missing:
@@ -131,7 +147,9 @@ def main():
         print(f"  DRIFT {path}: '{en}' -> {zh}")
     for uid, tok in sorted(numloss)[:30]:
         print(f"  NUMBER [{uid}] lost {tok!r} :: {by_id[uid]['text'][:32]!r} -> {trans[uid][:32]!r}")
-    if missing or bad or drift or numloss:
+    for uid, tok in sorted(glue)[:30]:
+        print(f"  GLUE [{uid}] {tok!r} :: {by_id[uid]['text'][:32]!r} -> {trans[uid][:32]!r}")
+    if missing or bad or drift or numloss or glue:
         print("GATE: FAIL  (keep abbreviations in", args.allow,
               "; re-dispatch drifting lanes, restore lost numbers - never edit the gate)")
         sys.exit(1)
